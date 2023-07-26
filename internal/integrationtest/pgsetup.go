@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -105,6 +106,44 @@ func DropSlotAndPub(ctx context.Context, conn *pgxpool.Pool, sName slot, pName p
 	return err
 }
 
+func MustRunWithTx(ctx context.Context, f func(tx pgx.Tx) error) uint32 {
+	conn := MustCreateDbConnection()
+	defer conn.Close()
+
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		panic(err)
+	}
+
+	defer tx.Commit(ctx)
+
+	err = f(tx)
+	if err != nil {
+		panic(err)
+	}
+
+	xid := MustReadXid(ctx, tx)
+
+	return xid
+}
+
+func MustReadXid(ctx context.Context, tx pgx.Tx) uint32 {
+	r, err := tx.Query(ctx, "select txid_current()")
+	if err != nil {
+		panic(fmt.Errorf("unable to get current xid: %v", err))
+	}
+
+	var xid uint32
+	for r.Next() {
+		err = r.Scan(&xid)
+		if err != nil {
+			panic(fmt.Errorf("unable to read xid from result: %v", err))
+		}
+	}
+
+	return xid
+}
+
 func createSlotAndPub(ctx context.Context, conn *pgxpool.Pool, tName table, sName slot, pName pub) error {
 	fmt.Printf("creating replication slot %s\n", sName)
 
@@ -121,10 +160,15 @@ func createSlotAndPub(ctx context.Context, conn *pgxpool.Pool, tName table, sNam
 func createTable(ctx context.Context, conn *pgxpool.Pool, tName table) error {
 	query := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 			  (
-			    id BIGSERIAL PRIMARY KEY,
+			    id INTEGER PRIMARY KEY,
 			    field_int INTEGER
 			  )`, tName)
 	_, err := conn.Exec(ctx, query)
+
+	// make sure table's replica identity is set to FULL
+	// otherwise "identity" property of the JSON won't be available
+	query = fmt.Sprintf("ALTER TABLE %s REPLICA IDENTITY FULL", tName)
+	_, err = conn.Exec(ctx, query)
 	return err
 }
 

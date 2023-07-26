@@ -110,12 +110,20 @@ func (r *PgReplicator) read(ctx context.Context) {
 	for {
 		err := r.sendStandBy(ctx)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+
 			// TODO
 			log.Fatalln("failed to send standby: ", err)
 		}
 
 		rawMsg, err := r.receiveMsg(ctx)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+
 			if pgconn.Timeout(err) {
 				continue
 			}
@@ -136,6 +144,10 @@ func (r *PgReplicator) read(ctx context.Context) {
 		}
 
 		err = r.processMsg(msg)
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+
 		if err != nil {
 			// TODO
 			log.Fatalf("failed to process message: %+v\n", err)
