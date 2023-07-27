@@ -159,7 +159,28 @@ func (s *ListenerJSON) OnUpdate(msg *pglogrepl.UpdateMessageV2) error {
 }
 
 func (s *ListenerJSON) OnDelete(msg *pglogrepl.DeleteMessageV2) error {
-	//TODO implement me
+	m := make(map[string]any)
+	m[ActionKey] = "D"
+	rel, ok := s.relations[msg.RelationID]
+	if !ok {
+		return fmt.Errorf("%v: %d", errRelationNotFound, msg.RelationID)
+	}
+
+	m[SchemaKey] = rel.Namespace
+	m[TableKey] = rel.RelationName
+
+	o, err := s.readTuple(msg.OldTuple, rel.Columns)
+	if err != nil {
+		return err
+	}
+	m[IdentityKey] = o
+
+	j, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	s.c <- string(j)
+
 	return nil
 }
 

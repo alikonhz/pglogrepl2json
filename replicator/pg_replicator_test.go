@@ -58,6 +58,18 @@ func TestTxWithUpdate(t *testing.T) {
 	assertCommit(t, receivedJSON[3])
 }
 
+func TestTxWithDelete(t *testing.T) {
+	// begin, insert, commit -> first tx
+	// begin, delete, commit -> second tx
+	c := make(chan string, 6)
+	tOpts, xid, commitTime, receivedJSON := runTest(t, c, insertDeleteSimpleData)
+	assert.Equal(t, 6, len(receivedJSON))
+
+	assertBegin(t, xid, commitTime, receivedJSON[3])
+	assertSimpleDelete(t, tOpts.table, receivedJSON[4])
+	assertCommit(t, receivedJSON[5])
+}
+
 func runTest(t *testing.T, c chan string, test func(ctx context.Context, tOpts testData) uint32) (testData, uint32, time.Time, []string) {
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -114,6 +126,20 @@ func assertSimpleUpdate(t *testing.T, table string, updateJSON string) {
 	assertValInMap(t, newValMap, "id", 1)
 	assertValInMap(t, newValMap, "field_int", 2)
 
+	oldValMap, err := readMapFromKey(t, m, listeners.IdentityKey)
+	assert.NoError(t, err)
+	assertValInMap(t, oldValMap, "id", 1)
+	assertValInMap(t, oldValMap, "field_int", 1)
+}
+
+func assertSimpleDelete(t *testing.T, table string, updateJSON string) {
+	m := mustParseToMap(updateJSON)
+	assert.Equal(t, "D", m[listeners.ActionKey])
+	assert.Equal(t, "public", m[listeners.SchemaKey])
+	assert.Equal(t, table, m[listeners.TableKey])
+
+	// in delete there's only "identity" (i.e. previous values)
+	assert.Nil(t, m[listeners.ColumnsKey])
 	oldValMap, err := readMapFromKey(t, m, listeners.IdentityKey)
 	assert.NoError(t, err)
 	assertValInMap(t, oldValMap, "id", 1)
@@ -205,6 +231,20 @@ func insertUpdateSimpleData(ctx context.Context, tOpts testData) uint32 {
 		_, err = tx.Exec(ctx, fmt.Sprintf("update %s set field_int = 2 where id = 1", tOpts.table))
 		if err != nil {
 			return fmt.Errorf("unable to update simple data: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func insertDeleteSimpleData(ctx context.Context, tOpts testData) uint32 {
+	insertSimpleData(ctx, tOpts)
+
+	// we need xid only of the last transaction
+	return integrationtest.MustRunWithTx(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, fmt.Sprintf("delete from %s where id = 1", tOpts.table))
+		if err != nil {
+			return fmt.Errorf("unable to delete simple data: %w", err)
 		}
 
 		return nil
