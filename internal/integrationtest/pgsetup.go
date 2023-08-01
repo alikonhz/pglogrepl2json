@@ -29,6 +29,30 @@ func MustLoad(fileName string) {
 	}
 }
 
+func MustLogicalDecodingWorkMem() {
+	p := MustCreateDbConnection()
+	rows, err := p.Query(context.Background(), "SHOW logical_decoding_work_mem")
+	if err != nil {
+		panic(fmt.Errorf("unable to read logical_decoding_work_mem config: %w", err))
+	}
+
+	defer rows.Close()
+	if !rows.Next() {
+		panic("no result returned for logical_decoding_work_mem query")
+	}
+
+	var workMem string
+	err = rows.Scan(&workMem)
+	if err != nil {
+		panic(fmt.Errorf("unable to read value for logical_decoding_work_mem: %w", err))
+	}
+
+	const expectedValue = "64kb"
+	if strings.ToLower(workMem) != expectedValue {
+		panic("logical_decoding_work_mem config option must be set to 64kb")
+	}
+}
+
 func MustCreateDbConnection() *pgxpool.Pool {
 	pgConnStr := os.Getenv(EnvPgTestConn)
 	if pgConnStr == "" {
@@ -145,8 +169,6 @@ func MustReadXid(ctx context.Context, tx pgx.Tx) uint32 {
 }
 
 func createSlotAndPub(ctx context.Context, conn *pgxpool.Pool, tName table, sName slot, pName pub) error {
-	fmt.Printf("creating replication slot %s\n", sName)
-
 	slotQuery := "SELECT pg_create_logical_replication_slot($1, 'pgoutput')"
 	_, err := conn.Exec(ctx, slotQuery, sName)
 	if err != nil {
@@ -161,7 +183,8 @@ func createTable(ctx context.Context, conn *pgxpool.Pool, tName table) error {
 	query := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s
 			  (
 			    id INTEGER PRIMARY KEY,
-			    field_int INTEGER
+			    field_int INTEGER,
+			    field_data BYTEA NULL
 			  )`, tName)
 	_, err := conn.Exec(ctx, query)
 

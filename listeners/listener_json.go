@@ -1,6 +1,8 @@
 package listeners
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/jackc/pglogrepl"
@@ -13,20 +15,55 @@ var (
 )
 
 const (
-	commit = `{ "action": "C" }`
+	pgTypeBytea uint32 = 17
+)
 
-	XidKey          = "xid"
-	ActionKey       = "action"
-	SchemaKey       = "schema"
-	TableKey        = "table"
-	ColumnsKey      = "columns"
-	IdentityKey     = "identity"
-	TimestampKey    = "timestamp"
+const (
+	Begin        = "B"
+	Insert       = "I"
+	Update       = "U"
+	Commit       = "C"
+	Delete       = "D"
+	Message      = "M"
+	Truncate     = "T"
+	StreamStart  = "AB"
+	StreamStop   = "AS"
+	StreamCommit = "AC"
+	StreamAbort  = "AA"
+)
+
+const (
+	commit     = `{ "action": "` + Commit + `" }`
+	streamStop = `{ "action": "` + StreamStop + `" }`
+
+	XidKey           = "xid"
+	SubXidKey        = "sub_xid"
+	ActionKey        = "action"
+	SchemaKey        = "schema"
+	TableKey         = "table"
+	ColumnsKey       = "columns"
+	IdentityKey      = "identity"
+	TimestampKey     = "timestamp"
+	TransactionalKey = "transactional"
+	ContentKey       = "content"
+	PrefixKey        = "prefix"
+	FirstSegmentKey  = "first_segment"
+
 	TimestampFormat = time.RFC3339Nano
 )
 
+const (
+	// BinaryEncodingBase64 specifies that all []byte data should be encoded as base64 string. This is the default value
+	BinaryEncodingBase64 byte = 0
+	// BinaryEncodingHex specifies that all []byte data should be encoded as HEX string
+	BinaryEncodingHex byte = 1
+)
+
+// ListenerJSONOptions contains options for JSON listener
 type ListenerJSONOptions struct {
-	IncludeTimestamp bool
+	// BinaryContentFormat controls how []byte data will be encoded. It can be either BinaryEncodingBase64 or BinaryEncodingHex.
+	// If other value is set then BinaryEncodingBase64 is used
+	BinaryContentFormat byte
 }
 
 type ListenerJSON struct {
@@ -42,6 +79,7 @@ func MustCreateNewJson(c chan string, opts ListenerJSONOptions) *ListenerJSON {
 	if c == nil {
 		panic("channel is nil")
 	}
+
 	return &ListenerJSON{
 		ListenerJSONOptions: opts,
 		c:                   c,
@@ -57,12 +95,10 @@ func (s *ListenerJSON) OnOrigin(msg *pglogrepl.OriginMessage) error {
 
 func (s *ListenerJSON) OnTxBegin(msg *pglogrepl.BeginMessage) error {
 	m := make(map[string]any)
-	m[ActionKey] = "B"
+	m[ActionKey] = Begin
 	m[XidKey] = msg.Xid
 
-	if s.ListenerJSONOptions.IncludeTimestamp {
-		m[TimestampKey] = msg.CommitTime.Format(TimestampFormat)
-	}
+	m[TimestampKey] = msg.CommitTime.Format(TimestampFormat)
 
 	j, err := json.Marshal(m)
 	if err != nil {
@@ -82,28 +118,63 @@ func (s *ListenerJSON) OnTxCommit(msg *pglogrepl.CommitMessage) error {
 }
 
 func (s *ListenerJSON) OnStreamStart(msg *pglogrepl.StreamStartMessageV2) error {
-	//TODO implement me
+	m := make(map[string]any)
+	m[ActionKey] = StreamStart
+	m[XidKey] = msg.Xid
+
+	const firstSegment uint8 = 1
+	m[FirstSegmentKey] = msg.FirstSegment == firstSegment
+
+	j, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	s.c <- string(j)
+
 	return nil
 }
 
-func (s *ListenerJSON) OnStreamStop(msg *pglogrepl.StreamStopMessageV2) error {
-	//TODO implement me
+func (s *ListenerJSON) OnStreamStop(_ *pglogrepl.StreamStopMessageV2) error {
+	s.c <- streamStop
 	return nil
 }
 
 func (s *ListenerJSON) OnStreamCommit(msg *pglogrepl.StreamCommitMessageV2) error {
-	//TODO implement me
+	m := make(map[string]any)
+	m[ActionKey] = StreamCommit
+	m[XidKey] = msg.Xid
+	m[TimestampKey] = msg.CommitTime.Format(TimestampFormat)
+
+	j, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	s.c <- string(j)
+
 	return nil
 }
 
 func (s *ListenerJSON) OnStreamAbort(msg *pglogrepl.StreamAbortMessageV2) error {
-	//TODO implement me
+	m := make(map[string]any)
+	m[ActionKey] = StreamAbort
+	m[XidKey] = msg.Xid
+	m[SubXidKey] = msg.SubXid
+
+	j, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	s.c <- string(j)
+
 	return nil
 }
 
 func (s *ListenerJSON) OnInsert(msg *pglogrepl.InsertMessageV2) error {
 	m := make(map[string]any)
-	m[ActionKey] = "I"
+	m[ActionKey] = Insert
 	rel, ok := s.relations[msg.RelationID]
 	if !ok {
 		return fmt.Errorf("%v: %d", errRelationNotFound, msg.RelationID)
@@ -128,7 +199,7 @@ func (s *ListenerJSON) OnInsert(msg *pglogrepl.InsertMessageV2) error {
 
 func (s *ListenerJSON) OnUpdate(msg *pglogrepl.UpdateMessageV2) error {
 	m := make(map[string]any)
-	m[ActionKey] = "U"
+	m[ActionKey] = Update
 	rel, ok := s.relations[msg.RelationID]
 	if !ok {
 		return fmt.Errorf("%v: %d", errRelationNotFound, msg.RelationID)
@@ -160,7 +231,7 @@ func (s *ListenerJSON) OnUpdate(msg *pglogrepl.UpdateMessageV2) error {
 
 func (s *ListenerJSON) OnDelete(msg *pglogrepl.DeleteMessageV2) error {
 	m := make(map[string]any)
-	m[ActionKey] = "D"
+	m[ActionKey] = Delete
 	rel, ok := s.relations[msg.RelationID]
 	if !ok {
 		return fmt.Errorf("%v: %d", errRelationNotFound, msg.RelationID)
@@ -185,12 +256,47 @@ func (s *ListenerJSON) OnDelete(msg *pglogrepl.DeleteMessageV2) error {
 }
 
 func (s *ListenerJSON) OnLogicalDecodingMessage(msg *pglogrepl.LogicalDecodingMessageV2) error {
-	//TODO implement me
+	m := make(map[string]any)
+	m[ActionKey] = Message
+	m[TransactionalKey] = msg.Transactional
+	m[PrefixKey] = msg.Prefix
+
+	m[ContentKey] = s.encodeBinary(msg.Content)
+
+	j, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	s.c <- string(j)
+
 	return nil
 }
 
 func (s *ListenerJSON) OnTruncate(msg *pglogrepl.TruncateMessageV2) error {
-	//TODO implement me
+	// we store JSON for all relations truncated in transaction
+	// this is to make sure that we either send JSON for all relations or for none (in case some marshal error occurs)
+	slice := make([]string, len(msg.RelationIDs), len(msg.RelationIDs))
+	for i := 0; i < len(msg.RelationIDs); i++ {
+		m := make(map[string]any)
+		m[ActionKey] = Truncate
+		rel, ok := s.relations[msg.RelationIDs[i]]
+		if !ok {
+			return fmt.Errorf("%v: %d", errRelationNotFound, msg.RelationIDs[i])
+		}
+		m[SchemaKey] = rel.Namespace
+		m[TableKey] = rel.RelationName
+
+		j, err := json.Marshal(m)
+		if err != nil {
+			return err
+		}
+
+		slice[i] = string(j)
+	}
+
+	for i := 0; i < len(slice); i++ {
+		s.c <- slice[i]
+	}
 	return nil
 }
 
@@ -201,7 +307,7 @@ func (s *ListenerJSON) OnRelation(msg *pglogrepl.RelationMessageV2) error {
 
 func (s *ListenerJSON) OnType(msg *pglogrepl.TypeMessageV2) error {
 	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (s *ListenerJSON) readTuple(t *pglogrepl.TupleData, columns []*pglogrepl.RelationMessageColumn) (map[string]any, error) {
@@ -232,6 +338,14 @@ func (s *ListenerJSON) writeValue(res map[string]any, col *pglogrepl.TupleDataCo
 		if err != nil {
 			return err
 		}
+		if relCol.DataType == pgTypeBytea {
+			data, ok := val.([]byte)
+			if ok && len(data) > 0 {
+				res[relCol.Name] = s.encodeBinary(data)
+				break
+			}
+		}
+
 		res[relCol.Name] = val
 	}
 
@@ -243,4 +357,13 @@ func (s *ListenerJSON) decode(data []byte, dataType uint32) (any, error) {
 		return dt.Codec.DecodeValue(s.typeMap, dataType, pgtype.TextFormatCode, data)
 	}
 	return string(data), nil
+}
+
+func (s *ListenerJSON) encodeBinary(data []byte) string {
+	switch s.ListenerJSONOptions.BinaryContentFormat {
+	case BinaryEncodingHex:
+		return hex.EncodeToString(data)
+	default:
+		return base64.StdEncoding.EncodeToString(data)
+	}
 }

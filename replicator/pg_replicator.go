@@ -114,7 +114,6 @@ func (r *PgReplicator) read(ctx context.Context) {
 				return
 			}
 
-			// TODO
 			log.Fatalln("failed to send standby: ", err)
 		}
 
@@ -128,18 +127,15 @@ func (r *PgReplicator) read(ctx context.Context) {
 				continue
 			}
 
-			// TODO
 			log.Fatalln("failed to receive message: ", err)
 		}
 
 		if errMsg, ok := rawMsg.(*pgproto3.ErrorResponse); ok {
-			// TODO
-			log.Fatalf("received PG wal error: %+v", errMsg)
+			log.Fatalln("received PG wal error: ", errMsg)
 		}
 
 		msg, ok := rawMsg.(*pgproto3.CopyData)
 		if !ok {
-			// TODO
 			log.Fatalf("received unexpected message: %T\n", rawMsg)
 		}
 
@@ -149,7 +145,6 @@ func (r *PgReplicator) read(ctx context.Context) {
 		}
 
 		if err != nil {
-			// TODO
 			log.Fatalf("failed to process message: %+v\n", err)
 		}
 	}
@@ -216,8 +211,6 @@ func (r *PgReplicator) processV2(walData []byte) error {
 	default:
 		return fmt.Errorf("%w: %T", errUnknownMessage, logicalMsg)
 	}
-
-	return nil
 }
 
 func (r *PgReplicator) processPrimaryKeepAlive(data []byte) error {
