@@ -22,7 +22,7 @@ const (
 	Begin        = "B"
 	Insert       = "I"
 	Update       = "U"
-	Commit       = "C"
+	Commit       = "c"
 	Delete       = "D"
 	Message      = "M"
 	Truncate     = "T"
@@ -33,9 +33,6 @@ const (
 )
 
 const (
-	commit     = `{ "action": "` + Commit + `" }`
-	streamStop = `{ "action": "` + StreamStop + `" }`
-
 	XidKey           = "xid"
 	SubXidKey        = "sub_xid"
 	ActionKey        = "action"
@@ -52,6 +49,11 @@ const (
 	TimestampFormat = time.RFC3339Nano
 )
 
+var (
+	commit     = []byte(`{ "action": "` + Commit + `" }`)
+	streamStop = []byte(`{ "action": "` + StreamStop + `" }`)
+)
+
 const (
 	// BinaryEncodingBase64 specifies that all []byte data should be encoded as base64 string. This is the default value
 	BinaryEncodingBase64 byte = 0
@@ -66,20 +68,20 @@ type ListenerJSONOptions struct {
 	BinaryContentFormat byte
 }
 
+// ListenerJSON transforms output from PG replication into JSON format similar to wal2json plugin
 type ListenerJSON struct {
 	ListenerJSONOptions
-	c         chan string
+	c         chan []byte
 	relations map[uint32]*pglogrepl.RelationMessageV2
 	typeMap   *pgtype.Map
 }
 
 // MustCreateNewJson creates a new JSON listener
-// it panics if c channel is nil
-func MustCreateNewJson(c chan string, opts ListenerJSONOptions) *ListenerJSON {
+// it panics if c is nil
+func MustCreateNewJson(c chan []byte, opts ListenerJSONOptions) *ListenerJSON {
 	if c == nil {
 		panic("channel is nil")
 	}
-
 	return &ListenerJSON{
 		ListenerJSONOptions: opts,
 		c:                   c,
@@ -88,11 +90,13 @@ func MustCreateNewJson(c chan string, opts ListenerJSONOptions) *ListenerJSON {
 	}
 }
 
+// OnOrigin is called when OriginMessage is received from replication connection
 func (s *ListenerJSON) OnOrigin(msg *pglogrepl.OriginMessage) error {
-	//TODO implement me
+	// not supported
 	return nil
 }
 
+// OnTxBegin is called when BeginMessage is received from replication connection
 func (s *ListenerJSON) OnTxBegin(msg *pglogrepl.BeginMessage) error {
 	m := make(map[string]any)
 	m[ActionKey] = Begin
@@ -105,11 +109,12 @@ func (s *ListenerJSON) OnTxBegin(msg *pglogrepl.BeginMessage) error {
 		return err
 	}
 
-	s.c <- string(j)
+	s.c <- j
 
 	return nil
 }
 
+// OnTxCommit is called when CommitMessage is received from replication connection
 func (s *ListenerJSON) OnTxCommit(msg *pglogrepl.CommitMessage) error {
 
 	s.c <- commit
@@ -117,6 +122,7 @@ func (s *ListenerJSON) OnTxCommit(msg *pglogrepl.CommitMessage) error {
 	return nil
 }
 
+// OnStreamStart is called when StreamStartMessageV2 is received from replication connection
 func (s *ListenerJSON) OnStreamStart(msg *pglogrepl.StreamStartMessageV2) error {
 	m := make(map[string]any)
 	m[ActionKey] = StreamStart
@@ -130,16 +136,18 @@ func (s *ListenerJSON) OnStreamStart(msg *pglogrepl.StreamStartMessageV2) error 
 		return err
 	}
 
-	s.c <- string(j)
+	s.c <- j
 
 	return nil
 }
 
+// OnStreamStop is called when StreamStopMessageV2 is received from replication connection
 func (s *ListenerJSON) OnStreamStop(_ *pglogrepl.StreamStopMessageV2) error {
 	s.c <- streamStop
 	return nil
 }
 
+// OnStreamCommit is called when StreamCommitMessageV2 is received from replication connection
 func (s *ListenerJSON) OnStreamCommit(msg *pglogrepl.StreamCommitMessageV2) error {
 	m := make(map[string]any)
 	m[ActionKey] = StreamCommit
@@ -151,11 +159,12 @@ func (s *ListenerJSON) OnStreamCommit(msg *pglogrepl.StreamCommitMessageV2) erro
 		return err
 	}
 
-	s.c <- string(j)
+	s.c <- j
 
 	return nil
 }
 
+// OnStreamAbort is called when StreamAbortMessageV2 is received from replication connection
 func (s *ListenerJSON) OnStreamAbort(msg *pglogrepl.StreamAbortMessageV2) error {
 	m := make(map[string]any)
 	m[ActionKey] = StreamAbort
@@ -167,11 +176,12 @@ func (s *ListenerJSON) OnStreamAbort(msg *pglogrepl.StreamAbortMessageV2) error 
 		return err
 	}
 
-	s.c <- string(j)
+	s.c <- j
 
 	return nil
 }
 
+// OnInsert is called when InsertMessageV2 is received from replication connection
 func (s *ListenerJSON) OnInsert(msg *pglogrepl.InsertMessageV2) error {
 	m := make(map[string]any)
 	m[ActionKey] = Insert
@@ -192,11 +202,12 @@ func (s *ListenerJSON) OnInsert(msg *pglogrepl.InsertMessageV2) error {
 	if err != nil {
 		return err
 	}
-	s.c <- string(j)
+	s.c <- j
 
 	return nil
 }
 
+// OnUpdate is called when UpdateMessageV2 is received from replication connection
 func (s *ListenerJSON) OnUpdate(msg *pglogrepl.UpdateMessageV2) error {
 	m := make(map[string]any)
 	m[ActionKey] = Update
@@ -224,11 +235,12 @@ func (s *ListenerJSON) OnUpdate(msg *pglogrepl.UpdateMessageV2) error {
 	if err != nil {
 		return err
 	}
-	s.c <- string(j)
+	s.c <- j
 
 	return nil
 }
 
+// OnDelete is called when DeleteMessageV2 is received from replication connection
 func (s *ListenerJSON) OnDelete(msg *pglogrepl.DeleteMessageV2) error {
 	m := make(map[string]any)
 	m[ActionKey] = Delete
@@ -250,11 +262,12 @@ func (s *ListenerJSON) OnDelete(msg *pglogrepl.DeleteMessageV2) error {
 	if err != nil {
 		return err
 	}
-	s.c <- string(j)
+	s.c <- j
 
 	return nil
 }
 
+// OnLogicalDecodingMessage is called when LogicalDecodingMessageV2 is received from replication connection
 func (s *ListenerJSON) OnLogicalDecodingMessage(msg *pglogrepl.LogicalDecodingMessageV2) error {
 	m := make(map[string]any)
 	m[ActionKey] = Message
@@ -267,15 +280,16 @@ func (s *ListenerJSON) OnLogicalDecodingMessage(msg *pglogrepl.LogicalDecodingMe
 	if err != nil {
 		return err
 	}
-	s.c <- string(j)
+	s.c <- j
 
 	return nil
 }
 
+// OnTruncate is called when TruncateMessageV2 is received from replication connection
 func (s *ListenerJSON) OnTruncate(msg *pglogrepl.TruncateMessageV2) error {
 	// we store JSON for all relations truncated in transaction
 	// this is to make sure that we either send JSON for all relations or for none (in case some marshal error occurs)
-	slice := make([]string, len(msg.RelationIDs), len(msg.RelationIDs))
+	slice := make([][]byte, len(msg.RelationIDs), len(msg.RelationIDs))
 	for i := 0; i < len(msg.RelationIDs); i++ {
 		m := make(map[string]any)
 		m[ActionKey] = Truncate
@@ -291,7 +305,7 @@ func (s *ListenerJSON) OnTruncate(msg *pglogrepl.TruncateMessageV2) error {
 			return err
 		}
 
-		slice[i] = string(j)
+		slice[i] = j
 	}
 
 	for i := 0; i < len(slice); i++ {
@@ -300,13 +314,15 @@ func (s *ListenerJSON) OnTruncate(msg *pglogrepl.TruncateMessageV2) error {
 	return nil
 }
 
+// OnRelation is called when RelationMessageV2 is received from replication connection
 func (s *ListenerJSON) OnRelation(msg *pglogrepl.RelationMessageV2) error {
 	s.relations[msg.RelationID] = msg
 	return nil
 }
 
+// OnType is called when TypeMessageV2 is received from replication connection
 func (s *ListenerJSON) OnType(msg *pglogrepl.TypeMessageV2) error {
-	//TODO implement me
+	// do nothing
 	return nil
 }
 

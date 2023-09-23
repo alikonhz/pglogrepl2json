@@ -41,7 +41,7 @@ func (t testData) createReplOptions() Options {
 func TestSimpleTx(t *testing.T) {
 
 	// JSON channel, we're expecting 3 entries
-	c := make(chan string, 3)
+	c := make(chan []byte, 3)
 	tOpts, xid, commitTime, receivedJSON := runTest(t, c, insertSimpleData)
 
 	assert.Equal(t, 3, len(receivedJSON))
@@ -51,7 +51,7 @@ func TestSimpleTx(t *testing.T) {
 }
 
 func TestTxWithUpdate(t *testing.T) {
-	c := make(chan string, 4)
+	c := make(chan []byte, 4)
 	tOpts, xid, commitTime, receivedJSON := runTest(t, c, insertUpdateSimpleData)
 
 	assert.Equal(t, 4, len(receivedJSON))
@@ -64,7 +64,7 @@ func TestTxWithUpdate(t *testing.T) {
 func TestTxWithDelete(t *testing.T) {
 	// begin, insert, commit -> first tx
 	// begin, delete, commit -> second tx
-	c := make(chan string, 6)
+	c := make(chan []byte, 6)
 	tOpts, xid, commitTime, receivedJSON := runTest(t, c, insertDeleteSimpleData)
 	assert.Equal(t, 6, len(receivedJSON))
 
@@ -74,7 +74,7 @@ func TestTxWithDelete(t *testing.T) {
 }
 
 func TestTxWithTruncate(t *testing.T) {
-	c := make(chan string, 6)
+	c := make(chan []byte, 6)
 	tOpts, xid, commitTime, receivedJSON := runTest(t, c, insertTruncateSimpleData)
 
 	assert.Equal(t, 6, len(receivedJSON))
@@ -103,7 +103,7 @@ func TestTxStream(t *testing.T) {
 	integrationtest.MustLogicalDecodingWorkMem()
 
 	// stream start, insert, stream stop, stream start, update, stream stop, stream commit
-	c := make(chan string, 7)
+	c := make(chan []byte, 7)
 	xData := &streamData{}
 	tOpts, xid, commitTime, receivedJSON := runTest(t, c, func(ctx context.Context, tOpts testData) uint32 {
 		return testStream(ctx, tOpts, xData)
@@ -194,7 +194,7 @@ func generateRandomData(size int) []byte {
 
 func testTxWithLogicalTranMsg(t *testing.T, msgContentEnc byte) {
 
-	c := make(chan string, 4)
+	c := make(chan []byte, 4)
 	tOpts, xid, commitTime, receivedJSON := runTestWithOpts(t,
 		c,
 		insertWithTransactionalMessage,
@@ -219,7 +219,7 @@ func TestTxWithLogicalMessage(t *testing.T) {
 }
 
 func testTxWithLogicalMsg(t *testing.T, msgContentEnc byte) {
-	c := make(chan string, 4)
+	c := make(chan []byte, 4)
 	tOpts, xid, commitTime, receivedJSON := runTestWithOpts(t,
 		c,
 		insertWithMessage,
@@ -234,7 +234,7 @@ func testTxWithLogicalMsg(t *testing.T, msgContentEnc byte) {
 }
 
 func runTestWithOpts(t *testing.T,
-	c chan string,
+	c chan []byte,
 	test func(ctx context.Context, tOpts testData) uint32,
 	opts listeners.ListenerJSONOptions) (testData, uint32, time.Time, []string) {
 
@@ -260,7 +260,7 @@ func runTestWithOpts(t *testing.T,
 	return tOpts, xid, commitTime, receivedJSON
 }
 
-func runTest(t *testing.T, c chan string, test func(ctx context.Context, tOpts testData) uint32) (testData, uint32, time.Time, []string) {
+func runTest(t *testing.T, c chan []byte, test func(ctx context.Context, tOpts testData) uint32) (testData, uint32, time.Time, []string) {
 	return runTestWithOpts(t, c, test, listeners.ListenerJSONOptions{})
 }
 
@@ -321,7 +321,7 @@ func assertSimpleInsert(t *testing.T, table string, insertJSON string) map[strin
 	assert.Equal(t, listeners.Insert, m[listeners.ActionKey])
 	assert.Equal(t, "public", m[listeners.SchemaKey])
 	assert.Equal(t, table, m[listeners.TableKey])
-	valMap, err := readMapFromKey(t, m, listeners.ColumnsKey)
+	valMap, err := readMapFromKey(m, listeners.ColumnsKey)
 	assert.NoError(t, err)
 	assertValInMap(t, valMap, "id", 1)
 	assertValInMap(t, valMap, "field_int", 1)
@@ -337,12 +337,12 @@ func assertSimpleUpdate(t *testing.T, table string, updateJSON string) (oldValMa
 
 	var err error
 
-	newValMap, err = readMapFromKey(t, m, listeners.ColumnsKey)
+	newValMap, err = readMapFromKey(m, listeners.ColumnsKey)
 	assert.NoError(t, err)
 	assertValInMap(t, newValMap, "id", 1)
 	assertValInMap(t, newValMap, "field_int", 2)
 
-	oldValMap, err = readMapFromKey(t, m, listeners.IdentityKey)
+	oldValMap, err = readMapFromKey(m, listeners.IdentityKey)
 	assert.NoError(t, err)
 	assertValInMap(t, oldValMap, "id", 1)
 	assertValInMap(t, oldValMap, "field_int", 1)
@@ -365,13 +365,13 @@ func assertSimpleDelete(t *testing.T, table string, deleteJSON string) {
 
 	// in delete there's only "identity" (i.e. previous values)
 	assert.Nil(t, m[listeners.ColumnsKey])
-	oldValMap, err := readMapFromKey(t, m, listeners.IdentityKey)
+	oldValMap, err := readMapFromKey(m, listeners.IdentityKey)
 	assert.NoError(t, err)
 	assertValInMap(t, oldValMap, "id", 1)
 	assertValInMap(t, oldValMap, "field_int", 1)
 }
 
-func readMapFromKey(t *testing.T, m map[string]any, key string) (map[string]any, error) {
+func readMapFromKey(m map[string]any, key string) (map[string]any, error) {
 	valMapAny, ok := m[key]
 	if !ok {
 		return nil, fmt.Errorf("%q is not found", key)
@@ -425,7 +425,7 @@ func mustParseToMap(j string) map[string]any {
 	return m
 }
 
-func waitForTestDataWithin(t time.Duration, c chan string) []string {
+func waitForTestDataWithin(t time.Duration, c chan []byte) []string {
 	ctx, cancel := context.WithTimeout(context.Background(), t)
 	defer cancel()
 
@@ -439,7 +439,7 @@ f:
 			if !ok {
 				break f
 			}
-			receivedJSON = append(receivedJSON, j)
+			receivedJSON = append(receivedJSON, string(j))
 		}
 	}
 
