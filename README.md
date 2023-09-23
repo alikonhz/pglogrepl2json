@@ -1,2 +1,2 @@
 # pglogrepl2json
-TODO
+This project uses pglogrepl package to produce output similar to wal2json format.
